@@ -3,35 +3,51 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Event {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<EventDateTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub end: Option<EventDateTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attendees: Vec<Attendee>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub organizer: Option<Organizer>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub html_link: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub updated: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub recurrence: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventDateTime {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,      // For all-day events
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub date_time: Option<String>, // For timed events (RFC3339)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub time_zone: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attendee {
     pub email: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub optional: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub response_status: Option<String>,
 }
 
