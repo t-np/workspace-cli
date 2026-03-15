@@ -557,7 +557,7 @@ enum CalendarCommands {
         #[arg(long)]
         full: bool,
     },
-    /// Create an event
+    /// Create an event (auto-generates Meet link, sends notifications, auto-accepts organizer)
     Create {
         /// Event summary/title
         #[arg(long)]
@@ -571,6 +571,9 @@ enum CalendarCommands {
         /// Description
         #[arg(long)]
         description: Option<String>,
+        /// Add attendee by email (repeatable)
+        #[arg(long)]
+        attendee: Vec<String>,
         /// Calendar ID
         #[arg(long, default_value = "primary")]
         calendar: String,
@@ -2191,7 +2194,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                CalendarCommands::Create { summary, start, end, description, calendar } => {
+                CalendarCommands::Create { summary, start, end, description, attendee, calendar } => {
                     let params = workspace_cli::commands::calendar::create::CreateEventParams {
                         calendar_id: calendar,
                         summary,
@@ -2199,7 +2202,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         end,
                         description,
                         location: None,
-                        attendees: None,
+                        attendees: attendee,
                         time_zone: None,
                     };
 
