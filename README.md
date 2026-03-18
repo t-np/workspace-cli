@@ -770,7 +770,9 @@ workspace-cli gmail send --to user@example.com --subject "Test" --body "Hello" -
 |---------|-------------|-------------|
 | `gmail list` | List messages | `--query`, `--limit`, `--label` |
 | `gmail get` | Get a specific message | `--full` (minimal by default) |
-| `gmail send` | Send an email | `--to`, `--subject`, `--body`, `--body-file` |
+| `gmail send` | Send an email (or reply in-thread) | `--to`, `--subject`, `--body`, `--body-file`, `--cc`, `--bcc`, `--thread-id`, `--in-reply-to` |
+| `gmail reply` | Reply to a message | `<id>`, `--body`, `--body-file`, `--all` |
+| `gmail reply-draft` | Create a draft reply | `<id>`, `--body`, `--all` |
 | `gmail draft` | Create a draft | `--to`, `--subject`, `--body` |
 | `gmail delete` | Permanently delete message | None |
 | `gmail trash` | Move message to trash | None |
@@ -995,6 +997,16 @@ workspace-cli gmail get <id> --full    # Full message structure
 # Gmail send/reply/modify - minimal responses (~90-99% reduction)
 workspace-cli gmail send --to user@example.com --subject "Hi" --body "Hello"
 # Returns: {"success":true,"id":"...","threadId":"..."}
+
+# Reply in existing thread (auto-fetches Message-ID for proper threading)
+workspace-cli gmail send --to user@example.com --subject "Re: Hi" --body "Reply" --thread-id <threadId>
+
+# Reply with cc/bcc
+workspace-cli gmail send --to user@example.com --subject "Re: Hi" --body "Reply" --thread-id <threadId> --cc other@example.com
+
+# Reply using the dedicated reply command (auto-extracts threading metadata)
+workspace-cli gmail reply <message-id> --body "Thanks!"
+workspace-cli gmail reply <message-id> --body "Thanks!" --all  # reply-all
 
 # Calendar list - minimal events by default (~50% reduction)
 workspace-cli calendar list --time-min "2024-01-01T00:00:00Z"

@@ -10,6 +10,7 @@ pub struct ComposeParams {
     pub body: String,
     pub from: Option<String>,
     pub cc: Option<String>,
+    pub bcc: Option<String>,
     /// Message-ID of parent message (for replies)
     pub in_reply_to: Option<String>,
     /// Space-separated Message-IDs of thread history (for replies)
@@ -77,6 +78,11 @@ fn build_raw_email(params: &ComposeParams) -> String {
     // Sanitize and add Cc header if present
     if let Some(ref cc) = params.cc {
         email.push_str(&format!("Cc: {}\r\n", sanitize_header(cc)));
+    }
+
+    // Sanitize and add Bcc header if present
+    if let Some(ref bcc) = params.bcc {
+        email.push_str(&format!("Bcc: {}\r\n", sanitize_header(bcc)));
     }
 
     // Add In-Reply-To header for replies (RFC 5322)

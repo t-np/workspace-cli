@@ -292,7 +292,7 @@ enum GmailCommands {
         #[arg(long)]
         full: bool,
     },
-    /// Send an email
+    /// Send an email (use --thread-id to reply in an existing thread)
     Send {
         /// Recipient email
         #[arg(long)]
@@ -306,6 +306,18 @@ enum GmailCommands {
         /// Read body from file
         #[arg(long)]
         body_file: Option<String>,
+        /// Cc recipients (comma-separated)
+        #[arg(long)]
+        cc: Option<String>,
+        /// Bcc recipients (comma-separated)
+        #[arg(long)]
+        bcc: Option<String>,
+        /// Gmail thread ID (reply in existing thread)
+        #[arg(long)]
+        thread_id: Option<String>,
+        /// Message-ID header of parent message (for threading)
+        #[arg(long)]
+        in_reply_to: Option<String>,
     },
     /// Create a draft
     Draft {
@@ -1434,11 +1446,31 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                GmailCommands::Send { to, subject, body, body_file } => {
+                GmailCommands::Send { to, subject, body, body_file, cc, bcc, thread_id, in_reply_to } => {
                     let body_content = if let Some(file_path) = body_file {
                         std::fs::read_to_string(file_path)?
                     } else {
                         body.unwrap_or_default()
+                    };
+
+                    // If thread_id provided without in_reply_to, auto-fetch Message-ID from last message
+                    let (resolved_in_reply_to, resolved_references) = if thread_id.is_some() && in_reply_to.is_none() {
+                        // Fetch last message in thread to get Message-ID for proper threading
+                        if let Ok(thread) = client.get::<serde_json::Value>(
+                            &format!("/users/me/threads/{}?format=metadata&metadataHeaders=Message-ID", thread_id.as_ref().unwrap())
+                        ).await {
+                            let msg_id = thread["messages"].as_array()
+                                .and_then(|msgs| msgs.last())
+                                .and_then(|msg| msg["payload"]["headers"].as_array())
+                                .and_then(|headers| headers.iter().find(|h| h["name"].as_str() == Some("Message-ID")))
+                                .and_then(|h| h["value"].as_str())
+                                .map(|s| s.to_string());
+                            (msg_id.clone(), msg_id)
+                        } else {
+                            (None, None)
+                        }
+                    } else {
+                        (in_reply_to.clone(), in_reply_to)
                     };
 
                     let params = workspace_cli::commands::gmail::send::ComposeParams {
@@ -1446,10 +1478,11 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         subject,
                         body: body_content,
                         from: None,
-                        cc: None,
-                        in_reply_to: None,
-                        references: None,
-                        thread_id: None,
+                        cc,
+                        bcc,
+                        in_reply_to: resolved_in_reply_to,
+                        references: resolved_references,
+                        thread_id,
                     };
 
                     match workspace_cli::commands::gmail::send::send_message(&client, params).await {
@@ -1479,6 +1512,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         body: body_content,
                         from: None,
                         cc: None,
+                        bcc: None,
                         in_reply_to: None,
                         references: None,
                         thread_id: None,
@@ -1654,6 +1688,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         body: body_content,
                         from: None,
                         cc: if all { metadata.cc } else { None },
+                        bcc: None,
                         in_reply_to: Some(metadata.in_reply_to),
                         references: Some(metadata.references),
                         thread_id: Some(metadata.thread_id),
@@ -1703,6 +1738,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         body: body.unwrap_or_default(),
                         from: None,
                         cc: if all { metadata.cc } else { None },
+                        bcc: None,
                         in_reply_to: Some(metadata.in_reply_to),
                         references: Some(metadata.references),
                         thread_id: Some(metadata.thread_id),
