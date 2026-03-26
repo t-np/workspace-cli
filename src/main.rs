@@ -5,6 +5,7 @@ use workspace_cli::Config;
 use workspace_cli::auth::TokenManager;
 use workspace_cli::client::ApiClient;
 use workspace_cli::output::{Formatter, OutputFormat};
+use workspace_cli::output::pagination::PageConfig;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -40,6 +41,22 @@ struct Cli {
     /// Impersonate user via domain-wide delegation (requires service account)
     #[arg(long = "as", global = true, value_name = "EMAIL")]
     impersonate: Option<String>,
+
+    /// Fetch all pages automatically (streams items one by one)
+    #[arg(long, global = true)]
+    page_all: bool,
+
+    /// Maximum pages to fetch when --page-all is active (default: 10; 0 = unlimited)
+    #[arg(long, global = true, default_value = "10")]
+    page_limit: u32,
+
+    /// Delay in milliseconds between page requests when paginating (default: 100)
+    #[arg(long, global = true, default_value = "100")]
+    page_delay: u64,
+
+    /// Preview API request without executing it (prints request details and exits)
+    #[arg(long, global = true)]
+    dry_run: bool,
 }
 
 #[derive(Subcommand)]
@@ -248,6 +265,9 @@ enum Commands {
         #[command(subcommand)]
         command: AdminCommands,
     },
+    /// Start MCP (Model Context Protocol) server over stdio
+    #[cfg(feature = "mcp")]
+    Mcp,
 }
 
 #[derive(Debug, Subcommand)]
@@ -272,7 +292,7 @@ enum GmailCommands {
         #[arg(long)]
         full: bool,
     },
-    /// Send an email
+    /// Send an email (use --thread-id to reply in an existing thread)
     Send {
         /// Recipient email
         #[arg(long)]
@@ -286,6 +306,18 @@ enum GmailCommands {
         /// Read body from file
         #[arg(long)]
         body_file: Option<String>,
+        /// Cc recipients (comma-separated)
+        #[arg(long)]
+        cc: Option<String>,
+        /// Bcc recipients (comma-separated)
+        #[arg(long)]
+        bcc: Option<String>,
+        /// Gmail thread ID (reply in existing thread)
+        #[arg(long)]
+        thread_id: Option<String>,
+        /// Message-ID header of parent message (for threading)
+        #[arg(long)]
+        in_reply_to: Option<String>,
     },
     /// Create a draft
     Draft {
@@ -621,6 +653,17 @@ enum DocsCommands {
         #[arg(long)]
         match_case: bool,
     },
+    /// Send a batchUpdate request to a document
+    BatchUpdate {
+        /// Document ID
+        id: String,
+        /// JSON payload (inline)
+        #[arg(long)]
+        payload: Option<String>,
+        /// Path to JSON file containing the batchUpdate payload
+        #[arg(long)]
+        file: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -720,6 +763,136 @@ enum SlidesCommands {
         #[arg(long)]
         full: bool,
     },
+    /// Create a new presentation
+    Create {
+        /// Presentation title
+        title: String,
+    },
+    /// Add a slide to a presentation
+    AddSlide {
+        /// Presentation ID
+        id: String,
+        /// Insertion index (omit to append)
+        #[arg(long)]
+        index: Option<u32>,
+        /// Slide layout (BLANK, TITLE, TITLE_AND_BODY, TITLE_AND_TWO_COLUMNS, etc.)
+        #[arg(long, default_value = "BLANK")]
+        layout: String,
+        /// Custom object ID for the new slide (auto-generated if omitted)
+        #[arg(long)]
+        object_id: Option<String>,
+    },
+    /// Add a shape to a slide
+    AddShape {
+        /// Presentation ID
+        id: String,
+        /// Slide object ID to place the shape on
+        #[arg(long)]
+        slide: String,
+        /// Shape type (RECTANGLE, TEXT_BOX, ELLIPSE, ROUNDED_RECTANGLE, etc.)
+        #[arg(long, default_value = "RECTANGLE")]
+        r#type: String,
+        /// Text to insert into the shape
+        #[arg(long)]
+        text: Option<String>,
+        /// X position in points
+        #[arg(long, default_value = "100")]
+        x: f64,
+        /// Y position in points
+        #[arg(long, default_value = "100")]
+        y: f64,
+        /// Width in points
+        #[arg(long, default_value = "300")]
+        width: f64,
+        /// Height in points
+        #[arg(long, default_value = "80")]
+        height: f64,
+        /// Fill color as hex (e.g. "#3366CC")
+        #[arg(long)]
+        fill: Option<String>,
+        /// Font size in points
+        #[arg(long)]
+        font_size: Option<f64>,
+        /// Make text bold
+        #[arg(long)]
+        bold: bool,
+        /// Custom object ID (auto-generated if omitted)
+        #[arg(long)]
+        object_id: Option<String>,
+    },
+    /// Add a table to a slide
+    AddTable {
+        /// Presentation ID
+        id: String,
+        /// Slide object ID
+        #[arg(long)]
+        slide: String,
+        /// Number of rows
+        #[arg(long)]
+        rows: u32,
+        /// Number of columns
+        #[arg(long)]
+        cols: u32,
+        /// Cell data as JSON 2D array (e.g. '[["A","B"],["1","2"]]')
+        #[arg(long)]
+        data: Option<String>,
+        /// Header row fill color as hex (e.g. "#333333")
+        #[arg(long)]
+        header_color: Option<String>,
+        /// Custom object ID (auto-generated if omitted)
+        #[arg(long)]
+        object_id: Option<String>,
+    },
+    /// Embed a Google Sheets chart on a slide
+    AddChart {
+        /// Presentation ID
+        id: String,
+        /// Slide object ID
+        #[arg(long)]
+        slide: String,
+        /// Source spreadsheet ID
+        #[arg(long)]
+        spreadsheet: String,
+        /// Chart ID from the spreadsheet
+        #[arg(long)]
+        chart_id: u64,
+        /// Keep chart linked to source data (auto-updates)
+        #[arg(long)]
+        linked: bool,
+        /// X position in points
+        #[arg(long, default_value = "50")]
+        x: f64,
+        /// Y position in points
+        #[arg(long, default_value = "50")]
+        y: f64,
+        /// Width in points
+        #[arg(long, default_value = "400")]
+        width: f64,
+        /// Height in points
+        #[arg(long, default_value = "300")]
+        height: f64,
+        /// Custom object ID (auto-generated if omitted)
+        #[arg(long)]
+        object_id: Option<String>,
+    },
+    /// Delete a slide or page element
+    Delete {
+        /// Presentation ID
+        id: String,
+        /// Object ID of the slide or element to delete
+        object_id: String,
+    },
+    /// Raw batchUpdate passthrough
+    BatchUpdate {
+        /// Presentation ID
+        id: String,
+        /// JSON array of request objects
+        #[arg(long, conflicts_with = "file")]
+        requests: Option<String>,
+        /// Read requests from a JSON file
+        #[arg(long, conflicts_with = "requests")]
+        file: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -791,6 +964,15 @@ enum AuthCommands {
     Logout,
     /// Show current authentication status
     Status,
+    /// Export stored credentials for headless/CI use
+    Export {
+        /// Show full unmasked access token (default: masked)
+        #[arg(long)]
+        unmasked: bool,
+        /// Write output to file instead of stdout
+        #[arg(long)]
+        output: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -876,6 +1058,9 @@ enum ChatCommands {
         /// Only show messages from today (shortcut for --after with today's date)
         #[arg(long)]
         today: bool,
+        /// Only show unread messages (uses read-state as --after), then marks space as read
+        #[arg(long)]
+        unread: bool,
     },
     /// Get read state for a space (shows lastReadTime)
     ReadState {
@@ -1125,6 +1310,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             BatchCommands::Calendar { .. } => "calendar",
         },
         Commands::Auth { .. } => "gmail", // auth doesn't make API calls, scope is irrelevant
+        #[cfg(feature = "mcp")]
+        Commands::Mcp => "gmail",
     };
     tm.set_service(service_name);
 
@@ -1139,6 +1326,12 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     });
     let quiet = cli.quiet;
 
+    let page_cfg = PageConfig {
+        page_all: cli.page_all,
+        page_limit: cli.page_limit,
+        page_delay: cli.page_delay,
+    };
+
     // Route commands
     match cli.command {
         Commands::Gmail { command } => {
@@ -1151,12 +1344,12 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let client = ApiClient::gmail(token_manager.clone());
+            let client = ApiClient::gmail(token_manager.clone()).with_dry_run(cli.dry_run);
             let mut formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet);
 
             match command {
                 GmailCommands::List { query, limit, label } => {
-                    let params = workspace_cli::commands::gmail::list::ListParams {
+                    let mut params = workspace_cli::commands::gmail::list::ListParams {
                         query,
                         max_results: limit,
                         label_ids: label.map(|l| vec![l]),
@@ -1170,19 +1363,52 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                             std::process::exit(1);
                         }).unwrap()
                     };
-                    match workspace_cli::commands::gmail::list::list_messages_with_metadata(&client, params, &access_token).await {
-                        Ok(response) => {
-                            if let Some(ref output_path) = cli.output {
-                                let file = std::fs::File::create(output_path)?;
-                                let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
-                                file_formatter.write(&response)?;
-                            } else {
-                                formatter.write(&response)?;
+
+                    if page_cfg.is_enabled() {
+                        let mut active_formatter = if let Some(ref output_path) = cli.output {
+                            let file = std::fs::File::create(output_path)?;
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file)
+                        } else {
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet)
+                        };
+                        active_formatter.start_stream()?;
+                        let mut page_num = 0u32;
+                        loop {
+                            match workspace_cli::commands::gmail::list::list_messages_with_metadata(&client, params.clone(), &access_token).await {
+                                Ok(response) => {
+                                    for msg in &response.messages {
+                                        active_formatter.stream_item(msg)?;
+                                    }
+                                    page_num += 1;
+                                    let next_token = response.next_page_token.clone();
+                                    if next_token.is_none() || !page_cfg.should_continue(page_num) {
+                                        break;
+                                    }
+                                    page_cfg.delay().await;
+                                    params.page_token = next_token;
+                                }
+                                Err(e) => {
+                                    eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                                    std::process::exit(1);
+                                }
                             }
                         }
-                        Err(e) => {
-                            eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
-                            std::process::exit(1);
+                        active_formatter.end_stream()?;
+                    } else {
+                        match workspace_cli::commands::gmail::list::list_messages_with_metadata(&client, params, &access_token).await {
+                            Ok(response) => {
+                                if let Some(ref output_path) = cli.output {
+                                    let file = std::fs::File::create(output_path)?;
+                                    let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                    file_formatter.write(&response)?;
+                                } else {
+                                    formatter.write(&response)?;
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                                std::process::exit(1);
+                            }
                         }
                     }
                 }
@@ -1223,11 +1449,31 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                GmailCommands::Send { to, subject, body, body_file } => {
+                GmailCommands::Send { to, subject, body, body_file, cc, bcc, thread_id, in_reply_to } => {
                     let body_content = if let Some(file_path) = body_file {
                         std::fs::read_to_string(file_path)?
                     } else {
                         body.unwrap_or_default()
+                    };
+
+                    // If thread_id provided without in_reply_to, auto-fetch Message-ID from last message
+                    let (resolved_in_reply_to, resolved_references) = if thread_id.is_some() && in_reply_to.is_none() {
+                        // Fetch last message in thread to get Message-ID for proper threading
+                        if let Ok(thread) = client.get::<serde_json::Value>(
+                            &format!("/users/me/threads/{}?format=metadata&metadataHeaders=Message-ID", thread_id.as_ref().unwrap())
+                        ).await {
+                            let msg_id = thread["messages"].as_array()
+                                .and_then(|msgs| msgs.last())
+                                .and_then(|msg| msg["payload"]["headers"].as_array())
+                                .and_then(|headers| headers.iter().find(|h| h["name"].as_str() == Some("Message-ID")))
+                                .and_then(|h| h["value"].as_str())
+                                .map(|s| s.to_string());
+                            (msg_id.clone(), msg_id)
+                        } else {
+                            (None, None)
+                        }
+                    } else {
+                        (in_reply_to.clone(), in_reply_to)
                     };
 
                     let params = workspace_cli::commands::gmail::send::ComposeParams {
@@ -1235,10 +1481,11 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         subject,
                         body: body_content,
                         from: None,
-                        cc: None,
-                        in_reply_to: None,
-                        references: None,
-                        thread_id: None,
+                        cc,
+                        bcc,
+                        in_reply_to: resolved_in_reply_to,
+                        references: resolved_references,
+                        thread_id,
                     };
 
                     match workspace_cli::commands::gmail::send::send_message(&client, params).await {
@@ -1268,6 +1515,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         body: body_content,
                         from: None,
                         cc: None,
+                        bcc: None,
                         in_reply_to: None,
                         references: None,
                         thread_id: None,
@@ -1443,6 +1691,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         body: body_content,
                         from: None,
                         cc: if all { metadata.cc } else { None },
+                        bcc: None,
                         in_reply_to: Some(metadata.in_reply_to),
                         references: Some(metadata.references),
                         thread_id: Some(metadata.thread_id),
@@ -1492,6 +1741,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         body: body.unwrap_or_default(),
                         from: None,
                         cc: if all { metadata.cc } else { None },
+                        bcc: None,
                         in_reply_to: Some(metadata.in_reply_to),
                         references: Some(metadata.references),
                         thread_id: Some(metadata.thread_id),
@@ -1532,7 +1782,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let client = ApiClient::drive(token_manager.clone());
+            let client = ApiClient::drive(token_manager.clone()).with_dry_run(cli.dry_run);
             let mut formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet);
 
             match command {
@@ -1545,7 +1795,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         (None, None) => None,
                     };
 
-                    let params = workspace_cli::commands::drive::list::ListParams {
+                    let mut params = workspace_cli::commands::drive::list::ListParams {
                         query: final_query,
                         max_results: limit,
                         page_token,
@@ -1554,19 +1804,52 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         corpora,
                         include_permissions,
                     };
-                    match workspace_cli::commands::drive::list::list_files(&client, params).await {
-                        Ok(response) => {
-                            if let Some(ref output_path) = cli.output {
-                                let file = std::fs::File::create(output_path)?;
-                                let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
-                                file_formatter.write(&response)?;
-                            } else {
-                                formatter.write(&response)?;
+
+                    if page_cfg.is_enabled() {
+                        let mut active_formatter = if let Some(ref output_path) = cli.output {
+                            let file = std::fs::File::create(output_path)?;
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file)
+                        } else {
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet)
+                        };
+                        active_formatter.start_stream()?;
+                        let mut page_num = 0u32;
+                        loop {
+                            match workspace_cli::commands::drive::list::list_files(&client, params.clone()).await {
+                                Ok(response) => {
+                                    for f in &response.files {
+                                        active_formatter.stream_item(f)?;
+                                    }
+                                    page_num += 1;
+                                    let next_token = response.next_page_token.clone();
+                                    if next_token.is_none() || !page_cfg.should_continue(page_num) {
+                                        break;
+                                    }
+                                    page_cfg.delay().await;
+                                    params.page_token = next_token;
+                                }
+                                Err(e) => {
+                                    eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                                    std::process::exit(1);
+                                }
                             }
                         }
-                        Err(e) => {
-                            eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
-                            std::process::exit(1);
+                        active_formatter.end_stream()?;
+                    } else {
+                        match workspace_cli::commands::drive::list::list_files(&client, params).await {
+                            Ok(response) => {
+                                if let Some(ref output_path) = cli.output {
+                                    let file = std::fs::File::create(output_path)?;
+                                    let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                    file_formatter.write(&response)?;
+                                } else {
+                                    formatter.write(&response)?;
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                                std::process::exit(1);
+                            }
                         }
                     }
                 }
@@ -1863,12 +2146,12 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let client = ApiClient::calendar(token_manager.clone());
+            let client = ApiClient::calendar(token_manager.clone()).with_dry_run(cli.dry_run);
             let mut formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet);
 
             match command {
                 CalendarCommands::List { calendar, time_min, time_max, limit, sync_token, full } => {
-                    let params = workspace_cli::commands::calendar::list::ListEventsParams {
+                    let mut params = workspace_cli::commands::calendar::list::ListEventsParams {
                         calendar_id: calendar,
                         time_min,
                         time_max,
@@ -1878,32 +2161,72 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         sync_token,
                         page_token: None,
                     };
-                    match workspace_cli::commands::calendar::list::list_events(&client, params).await {
-                        Ok(response) => {
-                            if full {
-                                // Return full event data
-                                if let Some(ref output_path) = cli.output {
-                                    let file = std::fs::File::create(output_path)?;
-                                    let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
-                                    file_formatter.write(&response)?;
-                                } else {
-                                    formatter.write(&response)?;
+
+                    if page_cfg.is_enabled() {
+                        let mut active_formatter = if let Some(ref output_path) = cli.output {
+                            let file = std::fs::File::create(output_path)?;
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file)
+                        } else {
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet)
+                        };
+                        active_formatter.start_stream()?;
+                        let mut page_num = 0u32;
+                        loop {
+                            match workspace_cli::commands::calendar::list::list_events(&client, params.clone()).await {
+                                Ok(response) => {
+                                    if full {
+                                        for event in &response.items {
+                                            active_formatter.stream_item(event)?;
+                                        }
+                                    } else {
+                                        for event in &response.items {
+                                            let minimal = workspace_cli::commands::calendar::types::MinimalEvent::from_event(event);
+                                            active_formatter.stream_item(&minimal)?;
+                                        }
+                                    }
+                                    page_num += 1;
+                                    let next_token = response.next_page_token.clone();
+                                    if next_token.is_none() || !page_cfg.should_continue(page_num) {
+                                        break;
+                                    }
+                                    page_cfg.delay().await;
+                                    params.page_token = next_token;
                                 }
-                            } else {
-                                // Default: minimal event data (id, summary, start, end, status)
-                                let minimal = workspace_cli::commands::calendar::types::MinimalEventList::from_event_list(&response);
-                                if let Some(ref output_path) = cli.output {
-                                    let file = std::fs::File::create(output_path)?;
-                                    let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
-                                    file_formatter.write(&minimal)?;
-                                } else {
-                                    formatter.write(&minimal)?;
+                                Err(e) => {
+                                    eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                                    std::process::exit(1);
                                 }
                             }
                         }
-                        Err(e) => {
-                            eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
-                            std::process::exit(1);
+                        active_formatter.end_stream()?;
+                    } else {
+                        match workspace_cli::commands::calendar::list::list_events(&client, params).await {
+                            Ok(response) => {
+                                if full {
+                                    // Return full event data
+                                    if let Some(ref output_path) = cli.output {
+                                        let file = std::fs::File::create(output_path)?;
+                                        let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                        file_formatter.write(&response)?;
+                                    } else {
+                                        formatter.write(&response)?;
+                                    }
+                                } else {
+                                    // Default: minimal event data (id, summary, start, end, status)
+                                    let minimal = workspace_cli::commands::calendar::types::MinimalEventList::from_event_list(&response);
+                                    if let Some(ref output_path) = cli.output {
+                                        let file = std::fs::File::create(output_path)?;
+                                        let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                        file_formatter.write(&minimal)?;
+                                    } else {
+                                        formatter.write(&minimal)?;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                                std::process::exit(1);
+                            }
                         }
                     }
                 }
@@ -1988,7 +2311,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let client = ApiClient::docs(token_manager.clone());
+            let client = ApiClient::docs(token_manager.clone()).with_dry_run(cli.dry_run);
             let mut formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet);
 
             match command {
@@ -2067,6 +2390,34 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
+                DocsCommands::BatchUpdate { id, payload, file } => {
+                    let json_str = if let Some(p) = payload {
+                        p
+                    } else if let Some(f) = file {
+                        std::fs::read_to_string(&f).map_err(|e| format!("Failed to read file: {}", e))?
+                    } else {
+                        eprintln!(r#"{{"status":"error","message":"Provide --payload or --file"}}"#);
+                        std::process::exit(1);
+                    };
+                    let body: serde_json::Value = serde_json::from_str(&json_str)
+                        .map_err(|e| format!("Invalid JSON: {}", e))?;
+                    let path = format!("/documents/{}:batchUpdate", id);
+                    match client.post::<serde_json::Value, serde_json::Value>(&path, &body).await {
+                        Ok(response) => {
+                            if let Some(ref output_path) = cli.output {
+                                let file = std::fs::File::create(output_path)?;
+                                let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                file_formatter.write(&response)?;
+                            } else {
+                                formatter.write(&response)?;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
             }
         }
         Commands::Sheets { command } => {
@@ -2079,7 +2430,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let client = ApiClient::sheets(token_manager.clone());
+            let client = ApiClient::sheets(token_manager.clone()).with_dry_run(cli.dry_run);
             let mut formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet);
 
             match command {
@@ -2270,7 +2621,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let client = ApiClient::slides(token_manager.clone());
+            let client = ApiClient::slides(token_manager.clone()).with_dry_run(cli.dry_run);
             let mut formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet);
 
             match command {
@@ -2338,6 +2689,188 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
+                SlidesCommands::Create { title } => {
+                    match workspace_cli::commands::slides::create::create_presentation(&client, &title).await {
+                        Ok(presentation) => {
+                            let result = serde_json::json!({
+                                "success": true,
+                                "presentationId": presentation.presentation_id,
+                                "title": presentation.title,
+                                "slideCount": presentation.slides.len(),
+                            });
+                            if let Some(ref output_path) = cli.output {
+                                let file = std::fs::File::create(output_path)?;
+                                let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                file_formatter.write(&result)?;
+                            } else {
+                                formatter.write(&result)?;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                SlidesCommands::AddSlide { id, index, layout, object_id } => {
+                    let oid = object_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                    match workspace_cli::commands::slides::create::add_slide(&client, &id, &oid, index, &layout).await {
+                        Ok(response) => {
+                            let result = serde_json::json!({
+                                "success": true,
+                                "slideObjectId": oid,
+                                "replies": response.replies,
+                            });
+                            if let Some(ref output_path) = cli.output {
+                                let file = std::fs::File::create(output_path)?;
+                                let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                file_formatter.write(&result)?;
+                            } else {
+                                formatter.write(&result)?;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                SlidesCommands::AddShape { id, slide, r#type, text, x, y, width, height, fill, font_size, bold, object_id } => {
+                    let oid = object_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                    match workspace_cli::commands::slides::update::add_shape(
+                        &client, &id, &oid, &slide, &r#type,
+                        x, y, width, height,
+                        text.as_deref(), fill.as_deref(), font_size, bold,
+                    ).await {
+                        Ok(response) => {
+                            let result = serde_json::json!({
+                                "success": true,
+                                "objectId": oid,
+                                "replies": response.replies,
+                            });
+                            if let Some(ref output_path) = cli.output {
+                                let file = std::fs::File::create(output_path)?;
+                                let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                file_formatter.write(&result)?;
+                            } else {
+                                formatter.write(&result)?;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                SlidesCommands::AddTable { id, slide, rows, cols, data, header_color, object_id } => {
+                    let oid = object_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                    let parsed_data: Option<Vec<Vec<String>>> = match data {
+                        Some(ref json_str) => Some(serde_json::from_str(json_str).map_err(|e| {
+                            eprintln!(r#"{{"status":"error","message":"Invalid --data JSON: {}"}}"#, e);
+                            std::process::exit(1);
+                        }).unwrap()),
+                        None => None,
+                    };
+                    match workspace_cli::commands::slides::update::add_table(
+                        &client, &id, &oid, &slide, rows, cols,
+                        parsed_data.as_ref(), header_color.as_deref(),
+                    ).await {
+                        Ok(response) => {
+                            let result = serde_json::json!({
+                                "success": true,
+                                "objectId": oid,
+                                "replies": response.replies,
+                            });
+                            if let Some(ref output_path) = cli.output {
+                                let file = std::fs::File::create(output_path)?;
+                                let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                file_formatter.write(&result)?;
+                            } else {
+                                formatter.write(&result)?;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                SlidesCommands::AddChart { id, slide, spreadsheet, chart_id, linked, x, y, width, height, object_id } => {
+                    let oid = object_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                    match workspace_cli::commands::slides::update::add_chart(
+                        &client, &id, &oid, &slide, &spreadsheet, chart_id, linked,
+                        x, y, width, height,
+                    ).await {
+                        Ok(response) => {
+                            let result = serde_json::json!({
+                                "success": true,
+                                "objectId": oid,
+                                "replies": response.replies,
+                            });
+                            if let Some(ref output_path) = cli.output {
+                                let file = std::fs::File::create(output_path)?;
+                                let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                file_formatter.write(&result)?;
+                            } else {
+                                formatter.write(&result)?;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                SlidesCommands::Delete { id, object_id } => {
+                    match workspace_cli::commands::slides::update::delete_object(&client, &id, &object_id).await {
+                        Ok(_response) => {
+                            let result = serde_json::json!({
+                                "success": true,
+                                "deleted": object_id,
+                            });
+                            if let Some(ref output_path) = cli.output {
+                                let file = std::fs::File::create(output_path)?;
+                                let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                file_formatter.write(&result)?;
+                            } else {
+                                formatter.write(&result)?;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                SlidesCommands::BatchUpdate { id, requests, file } => {
+                    let json_str = if let Some(ref req) = requests {
+                        req.clone()
+                    } else if let Some(ref path) = file {
+                        std::fs::read_to_string(path)?
+                    } else {
+                        eprintln!(r#"{{"status":"error","message":"Provide --requests or --file"}}"#);
+                        std::process::exit(1);
+                    };
+                    let parsed: Vec<serde_json::Value> = serde_json::from_str(&json_str).map_err(|e| {
+                        eprintln!(r#"{{"status":"error","message":"Invalid JSON: {}"}}"#, e);
+                        std::process::exit(1);
+                    }).unwrap();
+                    match workspace_cli::commands::slides::update::batch_update(&client, &id, parsed).await {
+                        Ok(response) => {
+                            if let Some(ref output_path) = cli.output {
+                                let file = std::fs::File::create(output_path)?;
+                                let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                file_formatter.write(&response)?;
+                            } else {
+                                formatter.write(&response)?;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
             }
         }
         Commands::Tasks { command } => {
@@ -2350,7 +2883,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let client = ApiClient::tasks(token_manager.clone());
+            let client = ApiClient::tasks(token_manager.clone()).with_dry_run(cli.dry_run);
             let mut formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet);
 
             match command {
@@ -2372,39 +2905,79 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 TasksCommands::List { list, limit, show_completed, full } => {
-                    let params = workspace_cli::commands::tasks::list::ListTasksParams {
+                    let mut params = workspace_cli::commands::tasks::list::ListTasksParams {
                         task_list_id: list,
                         max_results: limit.min(100),  // API max is 100
                         show_completed,
                         show_hidden: false,
                         page_token: None,
                     };
-                    match workspace_cli::commands::tasks::list::list_tasks(&client, params).await {
-                        Ok(response) => {
-                            if full {
-                                // Return full task data
-                                if let Some(ref output_path) = cli.output {
-                                    let file = std::fs::File::create(output_path)?;
-                                    let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
-                                    file_formatter.write(&response)?;
-                                } else {
-                                    formatter.write(&response)?;
+
+                    if page_cfg.is_enabled() {
+                        let mut active_formatter = if let Some(ref output_path) = cli.output {
+                            let file = std::fs::File::create(output_path)?;
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file)
+                        } else {
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet)
+                        };
+                        active_formatter.start_stream()?;
+                        let mut page_num = 0u32;
+                        loop {
+                            match workspace_cli::commands::tasks::list::list_tasks(&client, params.clone()).await {
+                                Ok(response) => {
+                                    if full {
+                                        for task in &response.items {
+                                            active_formatter.stream_item(task)?;
+                                        }
+                                    } else {
+                                        for task in &response.items {
+                                            let minimal = workspace_cli::commands::tasks::types::MinimalTask::from_task(task);
+                                            active_formatter.stream_item(&minimal)?;
+                                        }
+                                    }
+                                    page_num += 1;
+                                    let next_token = response.next_page_token.clone();
+                                    if next_token.is_none() || !page_cfg.should_continue(page_num) {
+                                        break;
+                                    }
+                                    page_cfg.delay().await;
+                                    params.page_token = next_token;
                                 }
-                            } else {
-                                // Default: minimal task data (id, title, status, due, notes, completed)
-                                let minimal = workspace_cli::commands::tasks::types::MinimalTasks::from_tasks(&response);
-                                if let Some(ref output_path) = cli.output {
-                                    let file = std::fs::File::create(output_path)?;
-                                    let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
-                                    file_formatter.write(&minimal)?;
-                                } else {
-                                    formatter.write(&minimal)?;
+                                Err(e) => {
+                                    eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                                    std::process::exit(1);
                                 }
                             }
                         }
-                        Err(e) => {
-                            eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
-                            std::process::exit(1);
+                        active_formatter.end_stream()?;
+                    } else {
+                        match workspace_cli::commands::tasks::list::list_tasks(&client, params).await {
+                            Ok(response) => {
+                                if full {
+                                    // Return full task data
+                                    if let Some(ref output_path) = cli.output {
+                                        let file = std::fs::File::create(output_path)?;
+                                        let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                        file_formatter.write(&response)?;
+                                    } else {
+                                        formatter.write(&response)?;
+                                    }
+                                } else {
+                                    // Default: minimal task data (id, title, status, due, notes, completed)
+                                    let minimal = workspace_cli::commands::tasks::types::MinimalTasks::from_tasks(&response);
+                                    if let Some(ref output_path) = cli.output {
+                                        let file = std::fs::File::create(output_path)?;
+                                        let mut file_formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                        file_formatter.write(&minimal)?;
+                                    } else {
+                                        formatter.write(&minimal)?;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!(r#"{{"status":"error","message":"{}"}}"#, e);
+                                std::process::exit(1);
+                            }
                         }
                     }
                 }
@@ -2521,6 +3094,56 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         println!("{}", serde_json::to_string_pretty(&status).unwrap());
                     }
                 }
+                AuthCommands::Export { unmasked, output } => {
+                    // Use token_manager directly (tokens stored as JSON cache, not keyring)
+                    let (access_token, cache_path, storage_type) = {
+                        let mut tm = token_manager.write().await;
+                        if let Err(e) = tm.ensure_authenticated().await {
+                            eprintln!(r#"{{"status":"error","message":"Not authenticated: {}. Run 'workspace-cli auth login' first."}}"#, e);
+                            std::process::exit(1);
+                        }
+                        let token = match tm.get_access_token().await {
+                            Ok(t) => t,
+                            Err(e) => {
+                                eprintln!(r#"{{"status":"error","message":"Failed to get token: {}"}}"#, e);
+                                std::process::exit(1);
+                            }
+                        };
+                        let status = tm.status();
+                        (token, status.token_cache_path.to_string_lossy().to_string(), status.storage_type.clone())
+                    };
+
+                    // Mask or reveal the access token
+                    let token_len = access_token.len();
+                    let (token_display, env_value) = if unmasked {
+                        (access_token.clone(), access_token.clone())
+                    } else {
+                        let prefix_len = std::cmp::min(8, token_len);
+                        let masked = format!("{}...[use --unmasked to reveal]", &access_token[..prefix_len]);
+                        (masked, "[run with --unmasked to get full token]".to_string())
+                    };
+
+                    let result = serde_json::json!({
+                        "status": "ok",
+                        "storage_type": storage_type,
+                        "token_cache_path": cache_path,
+                        "access_token": token_display,
+                        "setup": {
+                            "note": "Access tokens expire in ~1 hour. For long-running CI, copy the token_cache_path file instead.",
+                            "env_command": format!("export WORKSPACE_ACCESS_TOKEN={}", env_value)
+                        }
+                    });
+
+                    let json_out = serde_json::to_string_pretty(&result).unwrap();
+                    if let Some(path) = output {
+                        std::fs::write(&path, &json_out)?;
+                        if !quiet {
+                            eprintln!("Credentials exported to {}", path);
+                        }
+                    } else {
+                        println!("{}", json_out);
+                    }
+                }
             }
         }
         Commands::Batch { command } => {
@@ -2607,7 +3230,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let client = ApiClient::chat(token_manager.clone());
+            let client = ApiClient::chat(token_manager.clone()).with_dry_run(cli.dry_run);
             let mut formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet);
 
             match command {
@@ -2619,18 +3242,48 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         }
                         None => None,
                     };
-                    let params = workspace_cli::commands::chat::spaces::ListSpacesParams {
+                    let mut params = workspace_cli::commands::chat::spaces::ListSpacesParams {
                         page_size: limit, page_token: None, filter,
                     };
-                    match workspace_cli::commands::chat::spaces::list_spaces(&client, params).await {
-                        Ok(response) => {
-                            if let Some(ref output_path) = cli.output {
-                                let file = std::fs::File::create(output_path)?;
-                                let mut ff = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
-                                ff.write(&response)?;
-                            } else { formatter.write(&response)?; }
+
+                    if page_cfg.is_enabled() {
+                        let mut active_formatter = if let Some(ref output_path) = cli.output {
+                            let file = std::fs::File::create(output_path)?;
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file)
+                        } else {
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet)
+                        };
+                        active_formatter.start_stream()?;
+                        let mut page_num = 0u32;
+                        loop {
+                            match workspace_cli::commands::chat::spaces::list_spaces(&client, params.clone()).await {
+                                Ok(response) => {
+                                    for space in &response.spaces {
+                                        active_formatter.stream_item(space)?;
+                                    }
+                                    page_num += 1;
+                                    let next_token = response.next_page_token.clone();
+                                    if next_token.is_none() || !page_cfg.should_continue(page_num) {
+                                        break;
+                                    }
+                                    page_cfg.delay().await;
+                                    params.page_token = next_token;
+                                }
+                                Err(e) => { eprintln!(r#"{{"status":"error","message":"{}"}}"#, e); std::process::exit(1); }
+                            }
                         }
-                        Err(e) => { eprintln!(r#"{{"status":"error","message":"{}"}}"#, e); std::process::exit(1); }
+                        active_formatter.end_stream()?;
+                    } else {
+                        match workspace_cli::commands::chat::spaces::list_spaces(&client, params).await {
+                            Ok(response) => {
+                                if let Some(ref output_path) = cli.output {
+                                    let file = std::fs::File::create(output_path)?;
+                                    let mut ff = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                    ff.write(&response)?;
+                                } else { formatter.write(&response)?; }
+                            }
+                            Err(e) => { eprintln!(r#"{{"status":"error","message":"{}"}}"#, e); std::process::exit(1); }
+                        }
                     }
                 }
                 ChatCommands::SpacesFind { name } => {
@@ -2669,10 +3322,22 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         Err(e) => { eprintln!(r#"{{"status":"error","message":"{}"}}"#, e); std::process::exit(1); }
                     }
                 }
-                ChatCommands::MessagesList { space, limit, order, after, before, today } => {
+                ChatCommands::MessagesList { space, limit, order, after, before, today, unread } => {
                     let order_by = format!("createTime {}", if order.to_lowercase() == "asc" { "ASC" } else { "DESC" });
                     let mut filter_parts: Vec<String> = Vec::new();
-                    if today {
+                    if unread {
+                        match workspace_cli::commands::chat::read_state::get_space_read_state(&client, &space).await {
+                            Ok(state) => {
+                                if let Some(ref t) = state.last_read_time {
+                                    filter_parts.push(format!("createTime > \"{}\"", t));
+                                }
+                                // else: no read state = show all messages (no filter)
+                            }
+                            Err(e) => {
+                                eprintln!("Warning: could not get read state, showing all messages: {}", e);
+                            }
+                        }
+                    } else if today {
                         let today_start = chrono::Utc::now().format("%Y-%m-%dT00:00:00Z").to_string();
                         filter_parts.push(format!("createTime > \"{}\"", today_start));
                     } else if let Some(ref t) = after {
@@ -2682,56 +3347,93 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         filter_parts.push(format!("createTime < \"{}\"", t));
                     }
                     let filter = if filter_parts.is_empty() { None } else { Some(filter_parts.join(" AND ")) };
-                    let params = workspace_cli::commands::chat::messages::ListMessagesParams {
-                        space_name: space,
+                    let mut params = workspace_cli::commands::chat::messages::ListMessagesParams {
+                        space_name: space.clone(),
                         page_size: limit,
                         page_token: None,
                         order_by: Some(order_by),
                         filter,
                     };
-                    match workspace_cli::commands::chat::messages::list_messages(&client, params).await {
-                        Ok(mut response) => {
-                            // Resolve sender displayNames via Admin Directory API
-                            let user_ids: std::collections::HashSet<String> = response.messages.iter()
-                                .filter_map(|m| m.sender.as_ref())
-                                .filter(|s| s.display_name.is_none())
-                                .filter_map(|s| s.name.as_ref())
-                                .filter(|n| n.starts_with("users/"))
-                                .map(|n| n.strip_prefix("users/").unwrap().to_string())
-                                .collect();
-                            if !user_ids.is_empty() {
-                                let admin_client = ApiClient::admin(token_manager.clone());
-                                let mut name_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-                                for uid in &user_ids {
-                                    if let Ok(user) = workspace_cli::commands::admin::users::get_user(&admin_client, uid).await {
-                                        if let Some(uname) = user.name {
-                                            if let Some(full) = uname.full_name {
-                                                name_map.insert(uid.clone(), full);
+
+                    if page_cfg.is_enabled() {
+                        let mut active_formatter = if let Some(ref output_path) = cli.output {
+                            let file = std::fs::File::create(output_path)?;
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file)
+                        } else {
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet)
+                        };
+                        active_formatter.start_stream()?;
+                        let mut page_num = 0u32;
+                        loop {
+                            match workspace_cli::commands::chat::messages::list_messages(&client, params.clone()).await {
+                                Ok(response) => {
+                                    for msg in &response.messages {
+                                        active_formatter.stream_item(msg)?;
+                                    }
+                                    page_num += 1;
+                                    let next_token = response.next_page_token.clone();
+                                    if next_token.is_none() || !page_cfg.should_continue(page_num) {
+                                        break;
+                                    }
+                                    page_cfg.delay().await;
+                                    params.page_token = next_token;
+                                }
+                                Err(e) => { eprintln!(r#"{{"status":"error","message":"{}"}}"#, e); std::process::exit(1); }
+                            }
+                        }
+                        active_formatter.end_stream()?;
+                    } else {
+                        match workspace_cli::commands::chat::messages::list_messages(&client, params).await {
+                            Ok(mut response) => {
+                                // Resolve sender displayNames via Admin Directory API
+                                let user_ids: std::collections::HashSet<String> = response.messages.iter()
+                                    .filter_map(|m| m.sender.as_ref())
+                                    .filter(|s| s.display_name.is_none())
+                                    .filter_map(|s| s.name.as_ref())
+                                    .filter(|n| n.starts_with("users/"))
+                                    .map(|n| n.strip_prefix("users/").unwrap().to_string())
+                                    .collect();
+                                if !user_ids.is_empty() {
+                                    let admin_client = ApiClient::admin(token_manager.clone()).with_dry_run(cli.dry_run);
+                                    let mut name_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+                                    for uid in &user_ids {
+                                        if let Ok(user) = workspace_cli::commands::admin::users::get_user(&admin_client, uid).await {
+                                            if let Some(uname) = user.name {
+                                                if let Some(full) = uname.full_name {
+                                                    name_map.insert(uid.clone(), full);
+                                                }
                                             }
                                         }
                                     }
-                                }
-                                for msg in &mut response.messages {
-                                    if let Some(ref mut sender) = msg.sender {
-                                        if sender.display_name.is_none() {
-                                            if let Some(ref name) = sender.name {
-                                                if let Some(uid) = name.strip_prefix("users/") {
-                                                    if let Some(resolved) = name_map.get(uid) {
-                                                        sender.display_name = Some(resolved.clone());
+                                    for msg in &mut response.messages {
+                                        if let Some(ref mut sender) = msg.sender {
+                                            if sender.display_name.is_none() {
+                                                if let Some(ref name) = sender.name {
+                                                    if let Some(uid) = name.strip_prefix("users/") {
+                                                        if let Some(resolved) = name_map.get(uid) {
+                                                            sender.display_name = Some(resolved.clone());
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
                                 }
+                                if let Some(ref output_path) = cli.output {
+                                    let file = std::fs::File::create(output_path)?;
+                                    let mut ff = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                    ff.write(&response)?;
+                                } else { formatter.write(&response)?; }
                             }
-                            if let Some(ref output_path) = cli.output {
-                                let file = std::fs::File::create(output_path)?;
-                                let mut ff = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
-                                ff.write(&response)?;
-                            } else { formatter.write(&response)?; }
+                            Err(e) => { eprintln!(r#"{{"status":"error","message":"{}"}}"#, e); std::process::exit(1); }
                         }
-                        Err(e) => { eprintln!(r#"{{"status":"error","message":"{}"}}"#, e); std::process::exit(1); }
+                    }
+                    // --unread: mark space as read after successful pull
+                    if unread {
+                        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+                        if let Err(e) = workspace_cli::commands::chat::read_state::update_space_read_state(&client, &space, &now).await {
+                            eprintln!("Warning: could not mark space as read: {}", e);
+                        }
                     }
                 }
                 ChatCommands::ReadState { space } => {
@@ -2856,23 +3558,53 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let client = ApiClient::contacts(token_manager.clone());
+            let client = ApiClient::contacts(token_manager.clone()).with_dry_run(cli.dry_run);
             let mut formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet);
 
             match command {
                 ContactsCommands::List { limit } => {
-                    let params = workspace_cli::commands::contacts::list::ListContactsParams {
+                    let mut params = workspace_cli::commands::contacts::list::ListContactsParams {
                         page_size: limit, page_token: None,
                     };
-                    match workspace_cli::commands::contacts::list::list_contacts(&client, params).await {
-                        Ok(response) => {
-                            if let Some(ref output_path) = cli.output {
-                                let file = std::fs::File::create(output_path)?;
-                                let mut ff = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
-                                ff.write(&response)?;
-                            } else { formatter.write(&response)?; }
+
+                    if page_cfg.is_enabled() {
+                        let mut active_formatter = if let Some(ref output_path) = cli.output {
+                            let file = std::fs::File::create(output_path)?;
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file)
+                        } else {
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet)
+                        };
+                        active_formatter.start_stream()?;
+                        let mut page_num = 0u32;
+                        loop {
+                            match workspace_cli::commands::contacts::list::list_contacts(&client, params.clone()).await {
+                                Ok(response) => {
+                                    for person in &response.connections {
+                                        active_formatter.stream_item(person)?;
+                                    }
+                                    page_num += 1;
+                                    let next_token = response.next_page_token.clone();
+                                    if next_token.is_none() || !page_cfg.should_continue(page_num) {
+                                        break;
+                                    }
+                                    page_cfg.delay().await;
+                                    params.page_token = next_token;
+                                }
+                                Err(e) => { eprintln!(r#"{{"status":"error","message":"{}"}}"#, e); std::process::exit(1); }
+                            }
                         }
-                        Err(e) => { eprintln!(r#"{{"status":"error","message":"{}"}}"#, e); std::process::exit(1); }
+                        active_formatter.end_stream()?;
+                    } else {
+                        match workspace_cli::commands::contacts::list::list_contacts(&client, params).await {
+                            Ok(response) => {
+                                if let Some(ref output_path) = cli.output {
+                                    let file = std::fs::File::create(output_path)?;
+                                    let mut ff = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                    ff.write(&response)?;
+                                } else { formatter.write(&response)?; }
+                            }
+                            Err(e) => { eprintln!(r#"{{"status":"error","message":"{}"}}"#, e); std::process::exit(1); }
+                        }
                     }
                 }
                 ContactsCommands::Search { query, limit } => {
@@ -2926,18 +3658,48 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 ContactsCommands::DirectoryList { limit } => {
-                    let params = workspace_cli::commands::contacts::search::DirectoryListParams {
+                    let mut params = workspace_cli::commands::contacts::search::DirectoryListParams {
                         page_size: limit, page_token: None,
                     };
-                    match workspace_cli::commands::contacts::search::list_directory(&client, params).await {
-                        Ok(response) => {
-                            if let Some(ref output_path) = cli.output {
-                                let file = std::fs::File::create(output_path)?;
-                                let mut ff = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
-                                ff.write(&response)?;
-                            } else { formatter.write(&response)?; }
+
+                    if page_cfg.is_enabled() {
+                        let mut active_formatter = if let Some(ref output_path) = cli.output {
+                            let file = std::fs::File::create(output_path)?;
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file)
+                        } else {
+                            Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet)
+                        };
+                        active_formatter.start_stream()?;
+                        let mut page_num = 0u32;
+                        loop {
+                            match workspace_cli::commands::contacts::search::list_directory(&client, params.clone()).await {
+                                Ok(response) => {
+                                    for person in &response.people {
+                                        active_formatter.stream_item(person)?;
+                                    }
+                                    page_num += 1;
+                                    let next_token = response.next_page_token.clone();
+                                    if next_token.is_none() || !page_cfg.should_continue(page_num) {
+                                        break;
+                                    }
+                                    page_cfg.delay().await;
+                                    params.page_token = next_token;
+                                }
+                                Err(e) => { eprintln!(r#"{{"status":"error","message":"{}"}}"#, e); std::process::exit(1); }
+                            }
                         }
-                        Err(e) => { eprintln!(r#"{{"status":"error","message":"{}"}}"#, e); std::process::exit(1); }
+                        active_formatter.end_stream()?;
+                    } else {
+                        match workspace_cli::commands::contacts::search::list_directory(&client, params).await {
+                            Ok(response) => {
+                                if let Some(ref output_path) = cli.output {
+                                    let file = std::fs::File::create(output_path)?;
+                                    let mut ff = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet).with_writer(file);
+                                    ff.write(&response)?;
+                                } else { formatter.write(&response)?; }
+                            }
+                            Err(e) => { eprintln!(r#"{{"status":"error","message":"{}"}}"#, e); std::process::exit(1); }
+                        }
                     }
                 }
                 ContactsCommands::DirectorySearch { query, limit } => {
@@ -2964,7 +3726,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let client = ApiClient::groups(token_manager.clone());
+            let client = ApiClient::groups(token_manager.clone()).with_dry_run(cli.dry_run);
             let mut formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet);
 
             match command {
@@ -2973,7 +3735,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!(r#"{{"status":"error","message":"Either --email or --domain is required"}}"#);
                         std::process::exit(1);
                     }
-                    let admin_client = ApiClient::admin(token_manager.clone());
+                    let admin_client = ApiClient::admin(token_manager.clone()).with_dry_run(cli.dry_run);
                     let params = workspace_cli::commands::groups::list::ListGroupsParams {
                         email, domain, page_size: limit, page_token: None,
                     };
@@ -3011,7 +3773,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let client = ApiClient::admin(token_manager.clone());
+            let client = ApiClient::admin(token_manager.clone()).with_dry_run(cli.dry_run);
             let mut formatter = Formatter::new(format).with_fields(fields.clone()).with_quiet(quiet);
 
             match command {
@@ -3043,7 +3805,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 AdminCommands::ReportsDriveActivity { event_name, start_time, end_time, filters, max_results } => {
-                    let reports_client = ApiClient::admin_reports(token_manager.clone());
+                    let reports_client = ApiClient::admin_reports(token_manager.clone()).with_dry_run(cli.dry_run);
                     let params = workspace_cli::commands::admin::reports::DriveActivityParams {
                         event_name, start_time, end_time, filters, max_results,
                     };
@@ -3060,6 +3822,18 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+        }
+        #[cfg(feature = "mcp")]
+        Commands::Mcp => {
+            {
+                let mut tm = token_manager.write().await;
+                if let Err(e) = tm.ensure_authenticated().await {
+                    eprintln!(r#"{{"status":"error","message":"Not authenticated: {}. Run 'workspace-cli auth login' first."}}"#, e);
+                    std::process::exit(1);
+                }
+            }
+            eprintln!("workspace-cli MCP server starting (stdio)...");
+            workspace_cli::mcp::run(token_manager.clone()).await;
         }
     }
 
