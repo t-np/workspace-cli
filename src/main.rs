@@ -1058,6 +1058,9 @@ enum ChatCommands {
         /// Only show messages from today (shortcut for --after with today's date)
         #[arg(long)]
         today: bool,
+        /// Only show unread messages (uses read-state as --after), then marks space as read
+        #[arg(long)]
+        unread: bool,
     },
     /// Get read state for a space (shows lastReadTime)
     ReadState {
@@ -3319,10 +3322,22 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         Err(e) => { eprintln!(r#"{{"status":"error","message":"{}"}}"#, e); std::process::exit(1); }
                     }
                 }
-                ChatCommands::MessagesList { space, limit, order, after, before, today } => {
+                ChatCommands::MessagesList { space, limit, order, after, before, today, unread } => {
                     let order_by = format!("createTime {}", if order.to_lowercase() == "asc" { "ASC" } else { "DESC" });
                     let mut filter_parts: Vec<String> = Vec::new();
-                    if today {
+                    if unread {
+                        match workspace_cli::commands::chat::read_state::get_space_read_state(&client, &space).await {
+                            Ok(state) => {
+                                if let Some(ref t) = state.last_read_time {
+                                    filter_parts.push(format!("createTime > \"{}\"", t));
+                                }
+                                // else: no read state = show all messages (no filter)
+                            }
+                            Err(e) => {
+                                eprintln!("Warning: could not get read state, showing all messages: {}", e);
+                            }
+                        }
+                    } else if today {
                         let today_start = chrono::Utc::now().format("%Y-%m-%dT00:00:00Z").to_string();
                         filter_parts.push(format!("createTime > \"{}\"", today_start));
                     } else if let Some(ref t) = after {
@@ -3333,7 +3348,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     let filter = if filter_parts.is_empty() { None } else { Some(filter_parts.join(" AND ")) };
                     let mut params = workspace_cli::commands::chat::messages::ListMessagesParams {
-                        space_name: space,
+                        space_name: space.clone(),
                         page_size: limit,
                         page_token: None,
                         order_by: Some(order_by),
@@ -3411,6 +3426,13 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                                 } else { formatter.write(&response)?; }
                             }
                             Err(e) => { eprintln!(r#"{{"status":"error","message":"{}"}}"#, e); std::process::exit(1); }
+                        }
+                    }
+                    // --unread: mark space as read after successful pull
+                    if unread {
+                        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+                        if let Err(e) = workspace_cli::commands::chat::read_state::update_space_read_state(&client, &space, &now).await {
+                            eprintln!("Warning: could not mark space as read: {}", e);
                         }
                     }
                 }
